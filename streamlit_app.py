@@ -75,7 +75,6 @@ def compute_features(data):
 
 # Fetch stock data from yfinance
 @st.cache_data
-@st.cache_data
 def load_stock_data(stock):
     try:
         start_date = pd.to_datetime('2024-03-01')
@@ -117,36 +116,38 @@ def predict_stock(stock, model, scaler, data, period):
     # Feature columns in training order, excluding 'Close'
     feature_cols = FEATURE_COLS
     
-    # Prepare input data (last row)
-    input_data_df = data[feature_cols].tail(1)
+    # Initialize simulated dataset with enough historical data for feature computation
+    N = 50  # Sufficient for '50MA' and lagged features
+    sim_data = data.tail(N).copy()
     
-    # Transform the DataFrame, preserving feature names
-    input_scaled = scaler.transform(input_data_df)
-
-    print("Scaler feature names:", scaler.feature_names_in_)
-    print("Input data columns:", input_data_df.columns.tolist())
-    
-    # Predict future prices
+    # List to store predictions
     predictions = []
-    last_input = input_scaled.copy()
     
+    # Prediction loop for the specified period
     for _ in range(period):
-        pred = model.predict(last_input)[0]
+        # Prepare input data from the last row of sim_data
+        input_data_df = sim_data[feature_cols].tail(1)
+        input_scaled = scaler.transform(input_data_df)
+        
+        # Predict the next closing price
+        pred = model.predict(input_scaled)[0]
         predictions.append(pred)
         
-        # Scale the predicted 'Close' to match the scaling of 'Close_Lag1'
-        scaled_pred = (pred - scaler.mean_[12]) / scaler.scale_[12]
+        # Create a new row with the predicted 'Close' and placeholders
+        new_date = sim_data['Date'].iloc[-1] + timedelta(days=1)
+        new_row = {
+            'Date': new_date,
+            'Open': pred,  # Placeholder: assume same as Close
+            'High': pred,  # Placeholder
+            'Low': pred,   # Placeholder
+            'Close': pred
+        }
         
-        # Update input for next prediction
-        new_input = last_input.copy()
-        # Update lagged closes
-        new_input[0, 12] = scaled_pred           # Close_Lag1 = scaled predicted Close
-        new_input[0, 13] = last_input[0, 12]    # Close_Lag2 = previous Close_Lag1
-        new_input[0, 14] = last_input[0, 13]    # Close_Lag3 = previous Close_Lag2
-        new_input[0, 15] = last_input[0, 14]    # Close_Lag5 = previous Close_Lag3
-        new_input[0, 16] = last_input[0, 15]    # Close_Lag10 = previous Close_Lag5
-        # Note: Other features (MA, RSI, etc.) are not updated dynamically
-        last_input = new_input
+        # Append the new row to sim_data
+        sim_data = pd.concat([sim_data, pd.DataFrame([new_row])], ignore_index=True)
+        
+        # Recompute all features on the updated sim_data
+        sim_data = compute_features(sim_data)
     
     return predictions
 
@@ -371,7 +372,8 @@ def main():
     with st.sidebar:
         st.title("Stock Prophecy App")
         selected_stock = st.sidebar.selectbox("Select Stock", stock_list)
-        prediction_period = st.sidebar.slider("Prediction Period (days)", 1, 30, 5, step=1)
+        prediction_period_options = [7, 15, 30]
+        prediction_period = st.sidebar.selectbox("Prediction Period (days)", prediction_period_options)
         interval = st.sidebar.selectbox("Chart Interval", ["Day", "Week", "Month"])
 
     
