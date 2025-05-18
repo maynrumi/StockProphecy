@@ -25,7 +25,7 @@ def load_assets():
     for stock in stock_list:
         try:
             models[stock] = pickle.load(open(f'models/{stock}_model_lr1.pkl', 'rb'))
-            scalers[stock] = pickle.load(open(f"'calers/{stock}_scaler.pkl', 'rb'))
+            scalers[stock] = pickle.load(open(f'scalers/{stock}_scaler.pkl', 'rb'))
         except FileNotFoundError:
             st.error(f"Model or scaler file for {stock} not found.")
             return None, None, None
