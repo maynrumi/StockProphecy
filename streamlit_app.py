@@ -24,8 +24,8 @@ def load_assets():
     
     for stock in stock_list:
         try:
-            models[stock] = pickle.load(open(f'models/{stock}_model_lr1.pkl', 'rb'))
-            scalers[stock] = pickle.load(open(f'scalers/{stock}_scaler.pkl', 'rb'))
+            models[stock] = pickle.load(open(f'/workspaces/StockProphecy/models/{stock}_model_lr1.pkl', 'rb'))
+            scalers[stock] = pickle.load(open(f'/workspaces/StockProphecy/scalers/{stock}_scaler.pkl', 'rb'))
         except FileNotFoundError:
             st.error(f"Model or scaler file for {stock} not found.")
             return None, None, None
@@ -225,36 +225,45 @@ def plot_candlestick(stock, data, predictions, period, interval):
     
     return fig
 
+# Function for backtesting 
+def compute_backtest_predictions(model, scaler, data):
+    predictions = []
+    dates = []
+    for i in range(len(data) - 1):
+        input_data_df = data.iloc[i:i+1][FEATURE_COLS]
+        input_scaled = scaler.transform(input_data_df)
+        pred = model.predict(input_scaled)[0]
+        predictions.append(pred)
+        dates.append(data.iloc[i+1]['Date'])
+    return pd.DataFrame({'Date': dates, 'Predicted_Close': predictions})
+
+
+
 #Technical indicator charts
-def plot_interactive_candlestick(stock, data, interval):
-    # Determine the frequency for resampling
+def plot_interactive_candlestick(stock, data, interval, backtest_df=None):
     if interval == "Week":
         freq = 'W'
     elif interval == "Month":
         freq = 'M'
     else:
-        freq = None  # Daily, no resampling
+        freq = None
     
     if freq:
-        # Resample the data
         resampled = data.resample(freq, on='Date').agg({
             'Open': 'first',
             'High': 'max',
             'Low': 'min',
             'Close': 'last'
         }).dropna().reset_index()
-        # Compute features on resampled data
         resampled = compute_features(resampled)
     else:
         resampled = data.copy()
     
-    # Create subplots: 3 rows, shared x-axes with slightly increased spacing
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
-                        vertical_spacing=0.05,  # Increased from 0.02 for clarity
+                        vertical_spacing=0.05,
                         row_heights=[0.5, 0.2, 0.3],
                         subplot_titles=('Price', 'RSI', 'MACD'))
     
-    # Candlestick trace
     fig.add_trace(go.Candlestick(
         x=resampled['Date'],
         open=resampled['Open'],
@@ -264,7 +273,6 @@ def plot_interactive_candlestick(stock, data, interval):
         name='Candlestick'
     ), row=1, col=1)
     
-    # Moving Averages
     fig.add_trace(go.Scatter(
         x=resampled['Date'],
         y=resampled['20MA'],
@@ -281,7 +289,6 @@ def plot_interactive_candlestick(stock, data, interval):
         line=dict(color='orange')
     ), row=1, col=1)
     
-    # Bollinger Bands
     fig.add_trace(go.Scatter(
         x=resampled['Date'],
         y=resampled['Upper_Band'],
@@ -298,7 +305,15 @@ def plot_interactive_candlestick(stock, data, interval):
         line=dict(color='gray', dash='dash')
     ), row=1, col=1)
     
-    # RSI trace
+    if interval == "Day" and backtest_df is not None:
+        fig.add_trace(go.Scatter(
+            x=backtest_df['Date'],
+            y=backtest_df['Predicted_Close'],
+            mode='lines',
+            name='Backtest Prediction',
+            line=dict(color='black', dash='dash')
+        ), row=1, col=1)
+    
     fig.add_trace(go.Scatter(
         x=resampled['Date'],
         y=resampled['RSI'],
@@ -307,7 +322,6 @@ def plot_interactive_candlestick(stock, data, interval):
         line=dict(color='purple')
     ), row=2, col=1)
     
-    # MACD traces
     fig.add_trace(go.Scatter(
         x=resampled['Date'],
         y=resampled['MACD'],
@@ -331,7 +345,6 @@ def plot_interactive_candlestick(stock, data, interval):
         marker_color='blue'
     ), row=3, col=1)
     
-    # Update layout
     fig.update_layout(
         title=f'{stock} Technical Indicators ({interval})',
         xaxis_title='Date',
@@ -340,15 +353,13 @@ def plot_interactive_candlestick(stock, data, interval):
         showlegend=True
     )
     
-    # Update y-axes titles
     fig.update_yaxes(title_text='Price', row=1, col=1)
     fig.update_yaxes(title_text='RSI', row=2, col=1)
     fig.update_yaxes(title_text='MACD', row=3, col=1)
     
-    # Explicitly control range sliders
-    fig.update_xaxes(rangeslider_visible=False, row=1, col=1)  # Disable for Price
-    fig.update_xaxes(rangeslider_visible=False, row=2, col=1)  # Disable for RSI
-    fig.update_xaxes(rangeslider_visible=True, row=3, col=1)   # Enable for MACD
+    fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
+    fig.update_xaxes(rangeslider_visible=False, row=2, col=1)
+    fig.update_xaxes(rangeslider_visible=True, row=3, col=1)
     
     return fig
 
@@ -357,49 +368,68 @@ def plot_interactive_candlestick(stock, data, interval):
 def main():
     st.set_page_config(layout="wide")
     
-    # Set up input widgets
     st.logo("https://raw.githubusercontent.com/maynrumi/StockProphecy/main/forecast_img.png", 
-        icon_image="https://raw.githubusercontent.com/maynrumi/StockProphecy/main/mayan%20log.PNG")
+            icon_image="https://raw.githubusercontent.com/maynrumi/StockProphecy/main/mayan%20log.PNG")
     
-
-
-    # Load models, scalers, and stock list
     models, scalers, stock_list = load_assets()
     if models is None:
         return
     
-    # User interface
     with st.sidebar:
         st.title("Stock Prophecy App")
         selected_stock = st.sidebar.selectbox("Select Stock", stock_list)
         prediction_period_options = [7, 15, 30]
         prediction_period = st.sidebar.selectbox("Prediction Period (days)", prediction_period_options)
         interval = st.sidebar.selectbox("Chart Interval", ["Day", "Week", "Month"])
-
     
     if selected_stock and prediction_period:
-        # Load data
         data = load_stock_data(selected_stock)
         if data is None:
             return
         
-        st.subheader("Technical Indicators Chart")
-        indicators_fig = plot_interactive_candlestick(selected_stock, data, interval)
+        backtest_df = compute_backtest_predictions(models[selected_stock], scalers[selected_stock], data)
+        
+        st.subheader("Technical Indicators with Backtesting")
+        indicators_fig = plot_interactive_candlestick(selected_stock, data, interval, backtest_df=backtest_df)
         st.plotly_chart(indicators_fig, use_container_width=True)
-
-        # Make predictions
+        
         predictions = predict_stock(selected_stock, models[selected_stock], scalers[selected_stock], data, prediction_period)
         
-        # Display chart
-        st.subheader("Prediction Chart")
+        st.subheader("Forecasting Chart")
         fig = plot_candlestick(selected_stock, data, predictions, prediction_period, interval)
         st.plotly_chart(fig, use_container_width=True)
         
-        # Display raw predictions
         st.subheader("Predicted Prices")
         future_dates = pd.date_range(start=data['Date'].iloc[-1] + timedelta(days=1), periods=prediction_period)
         pred_df = pd.DataFrame({'Date': future_dates, 'Predicted Close': predictions})
         st.dataframe(pred_df)
 
+        # Add the footer
+        st.markdown("""
+        <style>
+        .copyright {
+            background-color: #f1f1f1;
+            padding: 10px;
+            text-align: center;
+            list-style-type: none;
+            margin: 0;
+            padding: 0;
+            border-top: 1px solid #ccc;
+        }
+
+        .copyright li {
+            display: inline;
+            margin-right: 10px;
+        }
+        </style>
+        <ul class="copyright">
+            <li>© Mayn Inc. All rights reserved.</li>
+            <li>Design: <a href="https://www.linkedin.com/in/maynrumey/" target="_blank">MAYN</a></li>
+        </ul>
+        """, unsafe_allow_html=True)
+
 if __name__ == "__main__":
     main()
+
+
+
